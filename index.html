@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<title>AI GMD Creator</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0b1020;color:#f8fafc}
+.wrap{max-width:900px;margin:auto;padding:20px}.card{background:#121a2d;border:1px solid #26324d;border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 8px 30px #0004}
+h1{margin:0 0 6px;font-size:30px}.sub{color:#9ca9c4;margin:0 0 18px}label{display:block;font-weight:700;margin:14px 0 7px}
+textarea,input,select{width:100%;border:1px solid #33415f;background:#0b1222;color:#fff;border-radius:12px;padding:12px;font:inherit}
+textarea{min-height:130px;resize:vertical}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+button{border:0;border-radius:12px;padding:13px 16px;font-weight:800;font-size:15px;cursor:pointer;margin:5px 5px 0 0}
+.primary{background:#7c3aed;color:#fff}.secondary{background:#24314d;color:#fff}.danger{background:#7f1d1d;color:#fff}
+#status{white-space:pre-wrap;color:#aebbd4}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#26324d;color:#cbd5e1;font-size:12px}
+canvas{width:100%;height:260px;background:#080d18;border-radius:14px;display:block}
+small{color:#8f9bb2}.hidden{display:none}
+@media(max-width:650px){.row{grid-template-columns:1fr}h1{font-size:26px}.wrap{padding:12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>🤖 AI GMD Creator</h1>
+    <p class="sub">Describe a Geometry Dash level and generate a blueprint + downloadable GMD.</p>
+    <span class="pill">GitHub Pages ready</span>
+    <span class="pill">iPad friendly</span>
+  </div>
+
+  <div class="card">
+    <label for="desc">Level description</label>
+    <textarea id="desc" placeholder="Example: A fast neon factory platformer with jumps, moving hazards, orbs and a dramatic final section."></textarea>
+    <div class="row">
+      <div><label for="mode">Mode</label><select id="mode"><option>Platformer</option><option>Classic</option></select></div>
+      <div><label for="length">Length</label><select id="length">
+        <option value="500">Tiny</option><option value="1000">Short</option><option value="2000" selected>Medium</option>
+        <option value="3500">Long</option><option value="6000">XL</option><option value="custom">Custom</option>
+      </select></div>
+    </div>
+    <div id="customBox" class="hidden"><label for="customLength">Custom length</label><input id="customLength" type="number" min="100" max="20000" value="2000"></div>
+  </div>
+
+  <div class="card">
+    <label for="apiKey">OpenAI API key <small>(optional; used only in this browser)</small></label>
+    <input id="apiKey" type="password" placeholder="sk-...">
+    <label for="model">Model</label>
+    <input id="model" value="gpt-5.6-luna">
+    <button class="primary" id="aiBtn">✨ Generate with AI</button>
+    <button class="secondary" id="offlineBtn">🧪 Generate offline</button>
+    <button class="secondary" id="copyBtn">📋 Copy blueprint</button>
+    <button class="secondary" id="downloadBtn">⬇️ Download GMD</button>
+    <p id="status">Ready.</p>
+  </div>
+
+  <div class="card">
+    <h2>Preview</h2>
+    <canvas id="preview" width="900" height="260"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>Blueprint</h2>
+    <pre id="json" style="white-space:pre-wrap;overflow:auto;max-height:350px"></pre>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let blueprint=null;
+$("length").onchange=()=> $("customBox").classList.toggle("hidden",$("length").value!=="custom");
+
+function getLength(){return $("length").value==="custom"?Math.max(100,Math.min(20000,+$("customLength").value||2000)): +$("length").value}
+function setStatus(s){$("status").textContent=s}
+
+function offline(){
+  const L=getLength(), mode=$("mode").value, desc=$("desc").value.trim()||"A fun Geometry Dash level";
+  const objects=[];
+  const spacing=Math.max(24,Math.floor(L/45));
+  for(let x=0;x<L;x+=spacing){
+    const pattern=(Math.floor(x/spacing)%7);
+    if(pattern===0) objects.push({id:1,x,y:0,w:6,h:1});
+    else if(pattern===1) objects.push({id:1,x,y:0,w:4,h:1},{id:8,x:x+2,y:1});
+    else if(pattern===2) objects.push({id:1,x,y:0,w:5,h:1},{id:36,x:x+2.5,y:2});
+    else if(pattern===3) objects.push({id:1,x,y:0,w:3,h:1},{id:8,x:x+3,y:1},{id:1,x:x+4,y:2,w:3,h:1});
+    else if(pattern===4) objects.push({id:1,x,y:0,w:7,h:1});
+    else if(pattern===5) objects.push({id:1,x,y:0,w:3,h:1},{id:8,x:x+1,y:1},{id:8,x:x+2,y:1});
+    else objects.push({id:1,x,y:0,w:4,h:1},{id:36,x:x+1.5,y:3});
+  }
+  objects.push({id:3600,x:L-30,y:0});
+  return {version:1,mode,length:L,description:desc,objects};
+}
+
+async function aiGenerate(){
+  const key=$("apiKey").value.trim();
+  if(!key){setStatus("No API key supplied — using the offline generator."); blueprint=offline(); render(); return}
+  setStatus("Generating blueprint with OpenAI…");
+  const schema={
+    type:"object",additionalProperties:false,
+    properties:{
+      version:{type:"integer"},mode:{type:"string"},length:{type:"integer"},
+      description:{type:"string"},
+      objects:{type:"array",items:{type:"object",additionalProperties:false,properties:{
+        id:{type:"integer"},x:{type:"number"},y:{type:"number"},w:{type:"number"},h:{type:"number"}
+      },required:["id","x","y"]}}
+    },required:["version","mode","length","description","objects"]
+  };
+  const prompt=`Create a Geometry Dash ${$("mode").value} level blueprint. Requested length: ${getLength()} units. User description: ${$("desc").value.trim()||"fun polished level"}.
+Use only simple objects: 1=solid block, 8=spike, 36=orb, 3600=end trigger. Make gameplay varied and coherent. Keep coordinates reasonable. Return only the structured JSON blueprint.`;
+  try{
+    const r=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+      body:JSON.stringify({model:$("model").value.trim()||"gpt-5.6-luna",input:prompt,text:{format:{type:"json_schema",name:"gmd_blueprint",schema,strict:true}}})});
+    if(!r.ok) throw new Error(await r.text());
+    const data=await r.json();
+    const out=data.output?.map(x=>x.content||[]).flat().find(x=>x.type==="output_text")?.text;
+    if(!out) throw new Error("No structured output returned.");
+    blueprint=JSON.parse(out); render(); setStatus("AI blueprint generated.");
+  }catch(e){setStatus("AI generation failed: "+e.message+"\nFalling back to offline generation.");blueprint=offline();render()}
+}
+
+function render(){
+  $("json").textContent=JSON.stringify(blueprint,null,2);
+  const c=$("preview"),ctx=c.getContext("2d");ctx.clearRect(0,0,c.width,c.height);
+  if(!blueprint)return;
+  const scale=Math.max(.25, c.width/Math.max(blueprint.length,100));
+  ctx.strokeStyle="#33415f";ctx.beginPath();ctx.moveTo(0,220);ctx.lineTo(c.width,220);ctx.stroke();
+  for(const o of blueprint.objects){
+    const x=o.x*scale, y=210-(o.y||0)*18, w=Math.max(5,(o.w||1)*scale*1.4);
+    if(o.id===1){ctx.fillStyle="#eab308";ctx.fillRect(x,y,w,18*Math.max(1,o.h||1))}
+    else if(o.id===8){ctx.fillStyle="#f8fafc";ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+8,y-18);ctx.lineTo(x+16,y);ctx.fill()}
+    else if(o.id===36){ctx.fillStyle="#22d3ee";ctx.beginPath();ctx.arc(x+6,y-8,6,0,Math.PI*2);ctx.fill()}
+    else if(o.id===3600){ctx.fillStyle="#22c55e";ctx.fillRect(x,70,5,150)}
+  }
+}
+
+function plistEscape(s){return s.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;")}
+function makeGMD(){
+  // A compact, deterministic plist container. Geometry Dash's internal level
+  // object syntax evolves; this prototype deliberately keeps the payload simple.
+  const objs=blueprint.objects.map(o=>`${o.id},2,${o.x.toFixed(2)},3,${(o.y||0).toFixed(2)}`).join(";");
+  const inner=`kA13,${blueprint.mode==="Platformer"?1:0};kA14,${blueprint.length};${objs}`;
+  const xml=`<?xml version="1.0"?><plist version="1.0"><dict><key>LLM_01</key><string>${plistEscape(btoa(unescape(encodeURIComponent(inner))))}</string></dict></plist>`;
+  return new Blob([xml],{type:"application/octet-stream"});
+}
+function download(){
+  if(!blueprint) blueprint=offline();
+  const a=document.createElement("a");a.href=URL.createObjectURL(makeGMD());a.download="AI_Generated_Level.gmd";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)
+}
+$("offlineBtn").onclick=()=>{blueprint=offline();render();setStatus("Offline level generated.")};
+$("aiBtn").onclick=aiGenerate;
+$("downloadBtn").onclick=download;
+$("copyBtn").onclick=async()=>{if(!blueprint)blueprint=offline();await navigator.clipboard.writeText(JSON.stringify(blueprint,null,2));setStatus("Blueprint copied.")};
+blueprint=offline();render();
+</script>
+</body>
+</html>
